@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Discord Clone</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              discord: {
+                dark: '#313338',
+                sidebar: '#2B2D31',
+                server: '#1E1F22',
+                input: '#383A40',
+                hover: '#3F4147',
+                text: '#DBDEE1',
+                header: '#F2F3F5',
+                divider: '#1E1F22',
+                blue: '#5865F2',
+                green: '#23A559',
+                red: '#DA373C',
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700&display=swap');
+      
+      body {
+        font-family: 'gg sans', 'Noto Sans KR', sans-serif;
+      }
+
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+        background-color: #2B2D31;
+      }
+      ::-webkit-scrollbar-track {
+        background-color: #2B2D31;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background-color: #1A1B1E;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background-color: #111214;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0"
+  }
+}
+</script>
+</head>
+  <body class="bg-[#313338] text-[#DBDEE1] antialiased h-screen overflow-hidden">
+    <div id="root" class="h-full w-full"></div>
+  </body>
+</html>
