@@ -1,70 +1,103 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Message, User } from '../types';
+// @ts-ignore
+import { joinRoom } from 'trystero';
 
 interface ChatRoomProps {
   user: User;
   onLeave: () => void;
 }
 
-// Broadcast channel for multi-tab communication
-const chatChannel = new BroadcastChannel('discord_clone_channel');
-
 export const ChatRoom: React.FC<ChatRoomProps> = ({ user, onLeave }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [onlineUsers, setOnlineUsers] = useState<User[]>([user]);
+  const [status, setStatus] = useState<string>('서버 연결 중...');
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-
-  // Auto-scroll to bottom
+  
+  // Refs for actions to avoid stale closures in Trystero callbacks
+  const onlineUsersRef = useRef<User[]>([user]);
+  
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
-  }, [messages]);
+    onlineUsersRef.current = onlineUsers;
+  }, [onlineUsers]);
 
-  // Handle incoming messages and user presence
+  // Connect to P2P Room
   useEffect(() => {
-    const handleBroadcast = (event: MessageEvent) => {
-      const data = event.data;
-      
-      // 1. New Message received
-      if (data.type === 'NEW_MESSAGE') {
-        setMessages(prev => [...prev, data.payload]);
-      } 
-      // 2. A new user joined -> Add them and announce myself
-      else if (data.type === 'USER_JOINED') {
-         if (data.payload.name !== user.name) {
-            setOnlineUsers(prev => {
-               if (prev.find(u => u.name === data.payload.name)) return prev;
-               return [...prev, data.payload];
-            });
-            // Tell the new user that I am here too
-            chatChannel.postMessage({ type: 'PRESENCE_UPDATE', payload: user });
-         }
-      }
-      // 3. Existing user announced presence -> Add them
-      else if (data.type === 'PRESENCE_UPDATE') {
-        if (data.payload.name !== user.name) {
-            setOnlineUsers(prev => {
-               if (prev.find(u => u.name === data.payload.name)) return prev;
-               return [...prev, data.payload];
-            });
-         }
-      }
-      // 4. User left (Optional, hard to detect on close but can simulate)
-      else if (data.type === 'USER_LEFT') {
-        setOnlineUsers(prev => prev.filter(u => u.name !== data.payload.name));
-      }
-    };
-
-    chatChannel.onmessage = handleBroadcast;
+    // Unique App ID for the mesh network
+    const config = { appId: 'discord-clone-kr-v1' };
     
-    // Announce join to everyone
-    chatChannel.postMessage({ type: 'USER_JOINED', payload: user });
+    // Connect to 'general' room
+    const room = joinRoom(config, 'general-chat');
+    
+    // Define actions
+    // Fix: use <any> generic to bypass strict DataPayload constraints (Index signature, JsonValue compatibility)
+    const [sendMessage, getMessage] = room.makeAction<any>('msg');
+    const [sendPresence, getPresence] = room.makeAction<any>('join');
 
-    // Cleanup: Attempt to announce leaving (best effort)
+    // Handle peer events
+    room.onPeerJoin((peerId: string) => {
+      setStatus(`피어 연결됨 (${peerId.slice(0, 4)})`);
+      // When someone joins, tell them who I am immediately
+      sendPresence(user, peerId);
+    });
+
+    room.onPeerLeave((peerId: string) => {
+      // We don't have peerId mapped directly in User struct in this simple version, 
+      // but we can assume we might loose them. 
+      // For simplicity in this demo, we just re-broadcast presence occasionally or let it be.
+      // A robust system would map peerId -> User.ID.
+      // Here we rely on the list state.
+      // Let's implement a simple "peerId" tracking in memory if needed, 
+      // but for now we won't remove users instantly to keep history visible,
+      // or we can just ignore leave events for this simple demo.
+    });
+
+    // Receive Message
+    getMessage((data: any, peerId: string) => {
+      const msg = data as Message;
+      setMessages(prev => [...prev, { ...msg, timestamp: new Date(msg.timestamp) }]);
+    });
+
+    // Receive Presence (User Joined/Announced)
+    getPresence((data: any, peerId: string) => {
+      const remoteUser = data as User;
+      setOnlineUsers(prev => {
+        // Prevent duplicates by ID
+        if (prev.some(u => u.id === remoteUser.id)) return prev;
+        
+        // Notification message
+        /* 
+        const systemMsg: Message = {
+           id: Date.now().toString(),
+           sender: 'System',
+           text: `${remoteUser.name}님이 참가하셨습니다.`,
+           isUser: false,
+           timestamp: new Date(),
+           isSystem: true
+        };
+        setMessages(m => [...m, systemMsg]);
+        */
+        
+        return [...prev, remoteUser];
+      });
+      setStatus('연결됨');
+    });
+
+    // Broadcast my presence to everyone in the room
+    // Wait a brief moment for connection stability
+    setTimeout(() => {
+        sendPresence(user);
+        setStatus('대기 중...');
+    }, 1000);
+
+    // Save actions to ref for usage outside
+    (window as any).p2pSend = sendMessage;
+
     return () => {
-      chatChannel.postMessage({ type: 'USER_LEFT', payload: user });
-      chatChannel.onmessage = null;
+      room.leave();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -74,8 +107,9 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ user, onLeave }) => {
     if (!inputText.trim()) return;
 
     const newMessage: Message = {
-      id: Date.now().toString() + Math.random().toString(),
+      id: crypto.randomUUID(),
       sender: user.name,
+      senderId: user.id,
       text: inputText.trim(),
       isUser: true,
       timestamp: new Date(),
@@ -85,12 +119,19 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ user, onLeave }) => {
     // Update local state
     setMessages(prev => [...prev, newMessage]);
     
-    // Broadcast to other tabs
-    chatChannel.postMessage({ type: 'NEW_MESSAGE', payload: newMessage });
+    // Broadcast to P2P network
+    if ((window as any).p2pSend) {
+        (window as any).p2pSend(newMessage);
+    }
     
     setInputText('');
     inputRef.current?.focus();
   };
+
+  // Auto-scroll
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+  }, [messages]);
 
   const formatTime = (date: Date | string) => {
     const d = new Date(date);
@@ -165,7 +206,7 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ user, onLeave }) => {
               </div>
               <div className="text-sm">
                   <div className="font-bold text-white leading-tight">{user.name}</div>
-                  <div className="text-[10px] text-[#B5BAC1] leading-tight">#{Math.floor(Math.random() * 9000) + 1000}</div>
+                  <div className="text-[10px] text-[#B5BAC1] leading-tight">#{user.discriminator}</div>
               </div>
            </div>
            <div className="flex items-center">
@@ -193,14 +234,14 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ user, onLeave }) => {
                 <svg className="w-10 h-10 text-white" fill="currentColor" viewBox="0 0 24 24"><path fillRule="evenodd" clipRule="evenodd" d="M5.88657 21C5.57547 21 5.3399 20.7189 5.39427 20.4126L6.00001 17H2.59511C2.28449 17 2.04905 16.7198 2.10259 16.4138L2.27759 15.4138C2.31946 15.1746 2.52722 15 2.77011 15H6.35001L7.41001 9H4.00511C3.69449 9 3.45905 8.71977 3.51259 8.41381L3.68759 7.41381C3.72946 7.17456 3.93722 7 4.18011 7H7.76001L8.39677 3.41262C8.43914 3.17391 8.64664 3 8.88907 3H9.87344C10.1845 3 10.4201 3.28107 10.3657 3.58738L9.76001 7H15.76L16.3968 3.41262C16.4391 3.17391 16.6466 3 16.8891 3H17.8734C18.1845 3 18.4201 3.28107 18.3657 3.58738L17.76 7H21.1649C21.4755 7 21.711 7.28023 21.6574 7.58619L21.4824 8.58619C21.4406 8.82544 21.2328 9 20.9899 9H17.41L16.35 15H19.7549C20.0655 15 20.301 15.2802 20.2474 15.5862L20.0724 16.5862C20.0306 16.8254 19.8228 17 19.5799 17H16L15.3632 20.5874C15.3209 20.8261 15.1134 21 14.8709 21H13.8866C13.5755 21 13.3399 20.7189 13.3943 20.4126L14 17H8.00001L7.36325 20.5874C7.32088 20.8261 7.11337 21 6.87094 21H5.88657ZM9.41001 9L8.35001 15H14.35L15.41 9H9.41001Z"></path></svg>
               </div>
               <h1 className="text-3xl font-bold text-white mb-2">#일반 에 오신 것을 환영합니다!</h1>
-              <p className="text-[#B5BAC1]">#일반 채널의 시작 부분이에요.</p>
+              <p className="text-[#B5BAC1]">친구들과 함께 대화를 시작해보세요. (P2P 연결)</p>
            </div>
 
            {/* Message List */}
            {messages.map((msg, idx) => {
              // Check if previous message was from same user within short time (grouping)
              const prevMsg = messages[idx - 1];
-             const isCompact = prevMsg && prevMsg.sender === msg.sender && (new Date(msg.timestamp).getTime() - new Date(prevMsg.timestamp).getTime() < 60000);
+             const isCompact = prevMsg && prevMsg.senderId === msg.senderId && (new Date(msg.timestamp).getTime() - new Date(prevMsg.timestamp).getTime() < 60000);
 
              return (
               <div 
@@ -254,9 +295,9 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ user, onLeave }) => {
                  className="w-full bg-transparent text-[#DBDEE1] outline-none placeholder-[#949BA4]"
                />
              </form>
-             <div className="flex items-center space-x-3 ml-2">
-                <svg className="w-6 h-6 text-[#B5BAC1] hover:text-[#DBDEE1] cursor-pointer" fill="currentColor" viewBox="0 0 24 24"><path fillRule="evenodd" clipRule="evenodd" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm4.59-12.42L10 14.17l-2.59-2.58L6 13l4 4 8-8-1.41-1.42z"/></svg>
-             </div>
+          </div>
+          <div className="text-xs text-[#949BA4] mt-1 ml-1">
+             {status}
           </div>
         </div>
       </div>
@@ -273,6 +314,9 @@ export const ChatRoom: React.FC<ChatRoomProps> = ({ user, onLeave }) => {
                 <div>
                    <div className="font-medium text-[#DBDEE1]">
                      {u.name} 
+                   </div>
+                   <div className="text-xs text-[#949BA4]">
+                     #{u.discriminator}
                    </div>
                 </div>
              </div>

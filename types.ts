@@ -6,11 +6,14 @@ export interface Message {
   timestamp: Date;
   isSystem?: boolean;
   avatarColor?: string;
+  senderId?: string;
 }
 
 export interface User {
+  id: string;
   name: string;
   avatarColor: string;
+  discriminator: string;
 }
 
 export enum ConnectionStatus {

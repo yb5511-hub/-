@@ -17,7 +17,14 @@ export const Login: React.FC<LoginProps> = ({ onJoin }) => {
     e.preventDefault();
     if (name.trim().length > 0) {
       const randomColor = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
-      onJoin({ name: name.trim(), avatarColor: randomColor });
+      const discriminator = Math.floor(Math.random() * 9000) + 1000;
+      
+      onJoin({ 
+        id: crypto.randomUUID(),
+        name: name.trim(), 
+        avatarColor: randomColor,
+        discriminator: discriminator.toString()
+      });
     }
   };
 
@@ -28,7 +35,7 @@ export const Login: React.FC<LoginProps> = ({ onJoin }) => {
       <div className="relative w-full max-w-[480px] bg-[#313338] rounded-md shadow-2xl p-8 transform transition-all">
         <div className="text-center mb-8">
           <h1 className="text-2xl font-bold text-white mb-2">돌아오신 것을 환영해요!</h1>
-          <p className="text-[#B5BAC1]">다시 만나서 반가워요!</p>
+          <p className="text-[#B5BAC1]">친구들과 이야기를 나눠보세요.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
